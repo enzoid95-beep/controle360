@@ -53,7 +53,12 @@ const ICON={
   escudo:'<path d="M12 3l8 3v6c0 4.5-3.2 8.3-8 9-4.8-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/>',
   del:'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
-  plus:'<path d="M12 5v14M5 12h14"/>'
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  transf:'<path d="M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4"/>',
+  relmes:'<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h7M9 9h2"/>',
+  patrimonio:'<path d="M3 21h18M5 21V10M9.5 21V10M14.5 21V10M19 21V10M2.5 10L12 4l9.5 6z"/>',
+  reserva:'<path d="M12 3l8 3v6c0 4.5-3.2 8.3-8 9-4.8-.7-8-4.5-8-9V6z"/><path d="M12 8v5M9.5 10.5h5"/>',
+  saldo:'<rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M16 15h2M7 3l2 3M17 3l-2 3"/>'
 };
 const svg=(k)=>`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
 const VIEWS=[
@@ -141,7 +146,7 @@ const plural=(n,s,p)=>n+' '+(n===1?s:p);
 /* ================= estado ================= */
 const CFG=window.CAIXA_CONFIG||{};
 let sb=null,canal=null,timer=null,gerando=false,instalarEvt=null;
-const S={fTag:'',ultima:{},mes:MES_ATUAL,ano:ANO_ATUAL,view:'geral',itens:[],movMetas:[],metas:[],contas:[],limites:{},mesadas:{},nomes:{},me:'',
+const S={tlN:(()=>{try{return Number(localStorage.getItem('pf-tl'))===6?6:12}catch(e){return 12}})(),fTag:'',ultima:{},mes:MES_ATUAL,ano:ANO_ATUAL,view:'geral',itens:[],movMetas:[],metas:[],contas:[],limites:{},mesadas:{},nomes:{},me:'',
   ordDes:(()=>{try{return localStorage.getItem('pf-ord-des')||'prioridade'}catch(e){return 'prioridade'}})(),fCat:'',fOrd:(()=>{try{return localStorage.getItem('pf-ord')||'recente'}catch(e){return 'recente'}})(),fBusca:'',temV2:true,temV4:true,saldoInicial:0,movCaixa:0,base:[],cartoes:[],recorrentes:[],dividas:[],desejos:[],orc:{},
   pagPrev:{},temV12:false,patrIni:'',temPatr:false,rendaMedia:0,temRenda:false,fut:[],card:[],fech:{},ccF:{cartao:'',mes:'',ano:''},pagDiv:[],invest:[],temV5:true,invAtivo:null,retro:{},calDia:null,abaDesejos:'aberto',sim:{nome:'',valor:'',forma:'vista',n:10},priv:false};
 try{S.priv=localStorage.getItem('pf-priv')==='1'}catch(e){}
@@ -565,6 +570,77 @@ function linhasProjecao(sm){
   tl.forEach(e=>{saldo+=e.entra?e.valor:-e.valor;linhas.push({d:e.data,t:e.txt,k:e.k,v:e.entra?e.valor:-e.valor,s:saldo,ic:e.ic||e.em})});
   return linhas;
 }
+/* gráfico em linha do tempo: entradas, gastos e investimentos de agosto/2026 até dezembro do ano seguinte.
+   Meses passados = realizado; do mês atual em diante = realizado + previsto (contas, entradas e aportes já programados). */
+const LINHA_INICIO='2026-08';
+function projecaoMes(m){
+  const r=resumo(m);let e=r.entradas,g=r.gastos,i=r.investido,pi=0,prev=false;
+  if(m>=MES_ATUAL){
+    prev=true;
+    Object.values(eventosMes(m)).forEach(es=>es.forEach(x=>{
+      if(x.feito)return;const v=x.pend!=null?x.pend:x.valor;
+      if(x.transf){if((x.k||'').startsWith('Investimento · aporte')){i+=v;pi+=v}else if((x.k||'').startsWith('Investimento · resgate')){i-=v;pi-=v}return}
+      if(x.cartao||x.divida)return; // compras no cartão já entram pelo mês da compra
+      if(x.entra)e+=v;else if(x.sai)g+=v;
+    }));
+  }
+  return {m,e:cent(e),g:cent(g),i:cent(i),pi:cent(pi),prev};
+}
+function graficoLinhaTempo(){
+  const fim=(ANO_ATUAL+1)+'-12',ini=LINHA_INICIO<fim?LINHA_INICIO:addMes(MES_ATUAL,-2);
+  const ms=[];for(let m=ini;m<=fim;m=addMes(m,1))ms.push(m);
+  const n=ms.length,vw=(document.getElementById('view')||{}).clientWidth||900,W=Math.round(Math.min(1300,Math.max(300,vw-64))),H=W<500?190:170,pl=W<500?40:46,pr=14,pt=10,pb=24;
+  const d=ms.map(projecaoMes);
+  /* investimentos = valor da carteira no fim de cada mês (histórico real até hoje; depois, carteira atual + aportes programados) */
+  if(!S.hist&&typeof carregarHist==='function')carregarHist();
+  let acum=totalInvest();
+  d.forEach(x=>{if(x.m<MES_ATUAL)x.i=cent(S.hist?patrimonioEm(x.m).invest:acum);else{acum=cent(acum+x.pi);x.i=acum}});
+  const SER=[['e','Entradas','#16f27a'],['g','Gastos','#ff4560'],['i','Investimentos (carteira)','#ffd76a']];
+  const vals=d.flatMap(x=>[x.e,x.g,x.i]),mx=Math.max(1,...vals),mn=Math.min(0,...vals);
+  const passo=(()=>{const bruto=(mx-mn)/3,p=Math.pow(10,Math.floor(Math.log10(bruto||1))),f=bruto/p;return (f<=1?1:f<=2?2:f<=5?5:10)*p})();
+  const topo=Math.ceil(mx/passo)*passo,base=Math.floor(mn/passo)*passo;
+  const X=i=>pl+(n===1?0:i*(W-pl-pr)/(n-1)),Y=v=>pt+(topo-v)/(topo-base||1)*(H-pt-pb),larg=(W-pl-pr)/Math.max(1,n-1);
+  const ia=Math.max(0,ms.indexOf(MES_ATUAL));
+  let grade='';for(let v=base;v<=topo+1e-6;v+=passo)grade+=`<line x1="${pl}" x2="${W-pr}" y1="${Y(v)}" y2="${Y(v)}" class="${v===0?'tl-zero':'tl-grade'}"/><text x="${pl-7}" y="${Y(v)+4}" text-anchor="end" class="tl-eixo">${KS(v)}</text>`;
+  const pulo=W<700?2:1;
+  const rot=d.map((x,i)=>{const mostra=i%pulo===0||x.m===MES_ATUAL||x.m.slice(5)==='01';if(!mostra)return '';const ano=(i===0||x.m.slice(5)==='01')?`<tspan class="tl-ano" x="${X(i)}" dy="11">${x.m.slice(0,4)}</tspan>`:'';
+    return `<text x="${X(i)}" y="${H-14}" text-anchor="middle" class="tl-eixo${x.m===MES_ATUAL?' atual':''}">${nomeMes(x.m,true)}${ano}</text>`}).join('');
+  const faixa=ia<n-1?`<rect class="tl-prev" x="${X(ia)}" y="${pt}" width="${X(n-1)-X(ia)}" height="${H-pt-pb}"/><text x="${X(n-1)}" y="${pt+10}" text-anchor="end" class="tl-prevl">previsão</text>`:'';
+  const pol=(k,cor,de,ate,tracejado)=>`<polyline class="tl-linha${tracejado?' tl-tr':''}" ${tracejado?'':'pathLength="1" '}fill="none" stroke="${cor}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" points="${d.slice(de,ate+1).map((x,j)=>X(de+j)+','+Y(x[k])).join(' ')}"/>`;
+  const linhas=SER.map(([k,,cor])=>pol(k,cor,0,ia,false)+(ia<n-1?pol(k,cor,ia,n-1,true):'')).join('');
+  const pts=d.map((x,i)=>SER.map(([k,,cor])=>`<circle class="tl-pt${x.prev&&x.m>MES_ATUAL?' fut':''}" data-i="${i}" cx="${X(i)}" cy="${Y(x[k])}" r="${x.m===MES_ATUAL?3:2.1}" fill="${cor}" style="--c:${cor}"/>`).join('')).join('');
+  const hit=d.map((x,i)=>`<rect class="tl-hit" data-i="${i}" x="${X(i)-larg/2}" y="0" width="${larg}" height="${H}"/>`).join('');
+  const dados=JSON.stringify(d.map(x=>({t:nomeMes(x.m)+(x.m===MES_ATUAL?' · realizado + previsto':x.prev?' · previsto':''),v:SER.map(([k,nome,cor])=>[nome,cor,R(x[k])])}))).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const atual=d[ia];
+  return `<div class="panel tl-panel"><div class="panel-head"><div><h2>Linha do tempo</h2><p class="sub">${esc(nomeMes(ms[0]))} até ${esc(nomeMes(fim))} · do mês atual em diante, realizado + previsto</p></div></div>
+    <div class="tl-wrap" data-d="${dados}"><svg class="tl-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Gráfico em linha de entradas, gastos e investimentos por mês, com previsão até ${fim.slice(0,4)}">${faixa}${grade}${rot}<line class="tl-guia" y1="${pt}" y2="${H-pb}" x1="0" x2="0"/>${linhas}${pts}${hit}</svg><div class="tl-tip" hidden></div></div>
+    <div class="legend tl-leg">${SER.map(([k,nome,cor])=>`<span><i style="background:${cor}"></i>${nome} <b>${R0(atual[k])}</b></span>`).join('')}<span class="mut">valores de ${esc(soMes(MES_ATUAL))} (realizado + previsto)</span></div></div>`;
+}
+/* passar o mouse (ou tocar) no gráfico: guia, pontos em destaque e quadro com os valores do mês */
+(function(){
+  const fora=()=>{document.querySelectorAll('.tl-wrap.on').forEach(w=>{w.classList.remove('on');const t=w.querySelector('.tl-tip');if(t)t.hidden=true;w.querySelectorAll('.tl-pt.on').forEach(p=>p.classList.remove('on'))})};
+  const mover=e=>{
+    const h=e.target.closest&&e.target.closest('.tl-hit');
+    if(!h){fora();return}
+    const w=h.closest('.tl-wrap'),svg=w.querySelector('svg'),i=Number(h.dataset.i);
+    let D;try{D=JSON.parse(w.dataset.d)}catch(x){return}
+    const x=D[i];if(!x)return;
+    w.classList.add('on');
+    w.querySelectorAll('.tl-pt.on').forEach(p=>p.classList.remove('on'));
+    w.querySelectorAll(`.tl-pt[data-i="${i}"]`).forEach(p=>p.classList.add('on'));
+    const g=w.querySelector('.tl-guia'),cx=Number(h.getAttribute('x'))+Number(h.getAttribute('width'))/2;
+    g.setAttribute('x1',cx);g.setAttribute('x2',cx);
+    const tip=w.querySelector('.tl-tip');
+    tip.innerHTML=`<b>${x.t}</b>`+x.v.map(([n,c,v])=>`<span><i style="background:${c}"></i>${n}<em>${v}</em></span>`).join('');
+    tip.hidden=false;
+    const k=svg.getBoundingClientRect().width/Number(svg.getAttribute('width')),px=cx*k,tw=tip.offsetWidth;
+    tip.style.left=Math.max(4,Math.min(w.clientWidth-tw-4,px+14>w.clientWidth-tw-4?px-tw-14:px+14))+'px';
+    tip.style.top='6px';
+  };
+  document.addEventListener('pointermove',mover);
+  document.addEventListener('pointerdown',mover);
+  document.documentElement.addEventListener('pointerleave',fora);
+})();
 function vGeral(){
   const sm=situacaoMes(),r0=resumo(MES_ATUAL),mc=soMes(MES_ATUAL),pat=patrimonioLiquido();
   const fimMes=MES_ATUAL+'-'+pad(ultimoDia(MES_ATUAL));
@@ -594,7 +670,7 @@ function vGeral(){
   const proxHTML=prox.length?`<div class="mini">${prox.map(e=>`<div class="mini-row"><div class="em">${e.ic||e.em}</div><div class="nm"><b>${esc(e.txt)}</b><small>${e.data===HOJE?'Hoje':diasEntre(HOJE,e.data)===1?'Amanhã':dataBR(e.data)} · ${esc(e.k)}</small>${acaoEvento(e,'btn xs ev-acao')}</div><div class="vl ${e.entra?'pos':'neg'}">${e.entra?'+ ':'− '}${R(e.pend!=null?e.pend:e.valor)}</div></div>`).join('')}</div>`
     :vazio('Nada pela frente','Cadastrem as contas que se repetem (aluguel, internet, salário) para o site avisar antes de vencer.',BTN('cr-nova','Cadastrar conta'));
   const ult=[...r.ef].sort((a,b)=>b.data.localeCompare(a.data)||b.criadoEm-a.criadoEm).slice(0,5);
-  const aCartaoMes=soma(r0.ef.filter(i=>i.tipo==='gasto'&&i.cartao_id&&i.status==='comprometido'));
+  const aCartaoMes=soma(r0.ef.filter(i=>i.tipo==='gasto'&&i.cartao_id&&i.status==='comprometido')),saiuCx=cent(r0.gastos-aCartaoMes);
   /* det = qual detalhe abre ao tocar no número (de onde ele vem) */
   const kpi=(k,v,cls,sub,det)=>`<div class="kpi${det?' kpi-click':''}"${det?` data-act="kpi-det" data-k="${det}" role="button" tabindex="0" title="Ver de onde vem este número"`:''}><small>${k}</small><b class="${cls}">${v}</b>${sub?`<span>${sub}</span>`:''}</div>`;
   return head('Visão geral','A situação de vocês e o que precisam saber agora.',BTN('novo-global','Novo'),true)+retro+`
@@ -602,13 +678,13 @@ function vGeral(){
     <div class="hv3-main">
       <div class="kpis-top">
         ${kpi(`Em caixa ${selo(sm.caixa,{inl:1})}`,R(sm.caixa),cS(sm.caixa)+' kpi-xl',`<button class="lnk" data-act="ajustar-caixa">Ajustar saldo</button>`,'caixa')}
-        ${kpi('Ainda a pagar',R0(sm.compromissos),sm.compromissos>0?'ref':'zero','tudo que ainda vai sair até o fim de '+esc(mc),'aPagar')}
+        ${kpi('Entradas',R0(r0.entradas),r0.entradas>0?'pos':'zero','recebidas em '+esc(mc)+` · <button class="lnk" data-act="renda-media">${S.rendaMedia>0?'renda média '+R0(S.rendaMedia):'definir renda média'}</button>`,'entradas')}
         ${kpi(`Patrimônio líquido ${selo(pat.liquido,{inl:1})}`,R0(pat.liquido),cS(pat.liquido),'caixa + metas + investimentos − dívidas','patrimonio')}
       </div>
       <div class="kpis-bot">
-        ${kpi('Entradas',R0(r0.entradas),r0.entradas>0?'pos':'zero','recebidas em '+esc(mc)+` · <button class="lnk" data-act="renda-media">${S.rendaMedia>0?'renda média '+R0(S.rendaMedia):'definir renda média'}</button>`,'entradas')}
-        ${kpi('Gastos realizados',R0(r0.gastos),r0.gastos>0?'neg':'zero','em '+esc(mc)+(aCartaoMes>0?` · <span class="ref">${R0(aCartaoMes)}</span> no cartão a pagar`:''),'gastos')}
-        ${kpi('Vence hoje / em atraso',R0(sm.aPagar),sm.aPagar>0?'neg':'zero',sm.aPagar>0?'pede pagamento agora':'nada vencido','vence')}
+        ${kpi('Já saiu do caixa',R0(saiuCx),saiuCx>0?'neg':'zero','saiu da conta em '+esc(mc),'jaSaiu')}
+        ${kpi('Falta pagar',R0(sm.compromissos),sm.compromissos>0?'ref':'zero','tudo que ainda vai sair até o fim de '+esc(mc),'aPagar')}
+        ${kpi('Gasto total do mês',R0(r0.gastos),r0.gastos>0?'neg':'zero','em '+esc(mc)+(aCartaoMes>0?` · <span class="ref">${R0(aCartaoMes)}</span> no cartão a pagar`:''),'gastos')}
       </div>
       <p class="hv3-nota hv3-dica">Toque em um número para ver de onde ele vem · <button class="lnk" data-act="glossario">o que significa cada termo?</button></p>
       ${sm.sugestaoMetas>0?`<p class="hv3-nota">🎯 Sugestão para as metas neste mês: <b class="ref">${R0(sm.sugestaoMetas)}</b>. Só sai do caixa quando vocês registrarem "Guardar na meta".</p>`:''}
@@ -628,7 +704,7 @@ function vGeral(){
       <div class="chart">${chart}</div>
       <div class="legend"><span><i style="background:#16f27a"></i>Entradas</span><span><i style="background:var(--neg)"></i>Gastos</span></div></div>
     <div class="panel"><div class="panel-head"><div><h2>Últimos lançamentos</h2><p class="sub">${esc(nomeMes(S.mes))}</p></div><button class="lnk" data-go="gastos">Ver todos →</button></div>${ult.length?`<div class="mini">${ult.map(linhaMini).join('')}</div>`:vazio('Mês vazio','Nada lançado em '+esc(soMes(S.mes))+'.')}</div>
-  </div>`;
+  </div>${graficoLinhaTempo()}`;
 }
 /* ================= transferências ================= */
 function vTransf(){
@@ -1509,7 +1585,7 @@ async function carregarHist(){
   S._histProm=(async()=>{try{
     const {data}=conferirLeitura(await lerTodos(()=>sb.from('lancamentos').select('*')));
     if(v0!==S._histV)return false;
-    S.hist=data.map(x=>({...x,valor:Number(x.valor)}));if(['relmes','patrimonio'].includes(S.view))render();return true;
+    S.hist=data.map(x=>({...x,valor:Number(x.valor)}));if(['relmes','patrimonio','geral'].includes(S.view))render();return true;
   }catch(e){toast('Não deu para carregar o histórico. Tente atualizar novamente.');return false}
   finally{if(v0===S._histV)S._histC=false}})();return S._histProm;
 }
@@ -2370,7 +2446,7 @@ function modalKpi(k){
   const atras=cent(sm.atrCartao+sm.atrContas);
   const aCartaoMes=soma(r0.ef.filter(i=>i.tipo==='gasto'&&i.cartao_id&&i.status==='comprometido'));
   let t='',def='',corpo='',go='',btnExtra='';
-  if(k==='aPagar'){t='Ainda a pagar';def='Tudo que já é obrigação de vocês e ainda não saiu do caixa até o fim de '+mc+'.';
+  if(k==='aPagar'){t='Falta pagar';def='Tudo que já é obrigação de vocês e ainda não saiu do caixa até o fim de '+mc+'.';
     corpo=grupo('Faturas de cartão',fat)+grupo('Contas e gastos agendados',ou)+grupo('Parcelas de dívida',dv)+(atras>0.004?lin('Atrasado de meses anteriores',R(atras),'neg'):'')+'<div class="sd-l tot"><span>Total</span><span><b class="ref">'+R(sm.compromissos)+'</b></span></div>';go='calendario'}
   else if(k==='vence'){t='Vence hoje / em atraso';def='A parte do "ainda a pagar" que já venceu ou vence hoje. É o que pede pagamento agora.';
     const ja=sai.filter(e=>e.data<=HOJE);
@@ -2380,7 +2456,7 @@ function modalKpi(k){
     btnExtra='<button class="btn ghost" data-act="ajustar-caixa">Ajustar saldo</button>'}
   else if(k==='patrimonio'){const pat=patrimonioLiquido();t='Patrimônio líquido';def='O que vocês têm: caixa, dinheiro em metas e investimentos, menos as dívidas cadastradas.';
     corpo=lin('Caixa',R(emCaixa()),cS(emCaixa()))+lin('Metas',R(totalMetas()))+lin('Investimentos',R(totalInvest()))+lin('Dívidas',pat.dividas>0?'− '+R(pat.dividas):R(0),pat.dividas>0?'neg':'zero')+'<div class="sd-l tot"><span>Patrimônio líquido</span><span><b class="'+cS(pat.liquido)+'">'+R(pat.liquido)+'</b></span></div>';go='patrimonio'}
-  else if(k==='gastos'){t='Gastos realizados';def='Tudo que vocês gastaram em '+mc+', independentemente da forma de pagamento.';
+  else if(k==='gastos'){t='Gasto total do mês';def='Tudo que vocês gastaram em '+mc+', independentemente da forma de pagamento.';
     corpo=lin('Já saíram do caixa',R(cent(r0.gastos-aCartaoMes)))+lin('No cartão, ainda a pagar',R(aCartaoMes),aCartaoMes>0?'ref':'zero')+'<div class="sd-l tot"><span>Total gasto</span><span><b class="neg">'+R(r0.gastos)+'</b></span></div>';go='gastos'}
   else if(k==='entradas'){t='Entradas';def='O que entrou em '+mc+' e o que ainda está previsto.';
     corpo=lin('Já recebido',R(r0.entradas),r0.entradas>0?'pos':'zero')+lin('Ainda a receber',R(sm.entra),sm.entra>0?'pos':'zero')+'<div class="sd-l tot"><span>Previsto no mês</span><span><b class="pos">'+R(cent(r0.entradas+sm.entra))+'</b></span></div>'+(S.rendaMedia>0?lin('Renda média definida',R(S.rendaMedia),'ref'):'');go='calendario'}
@@ -2740,10 +2816,10 @@ function modalMesadas(){
 }
 /* ---------- menu "mais", exportar, instalar ---------- */
 function modalMais(){
-  modal(`<h2>Menu</h2>${GRUPOS.map(g=>`<div class="mais-g"><div class="side-title">${esc(g.nome)}</div><div class="mais">${g.views.map(id=>{const v=VIEWS.find(x=>x.id===id);return `<button data-go="${id}" ${S.view===id?'aria-current="page"':''}>${svg(id==='geral'?'geral':id==='reserva'?'metas':id==='contas'?'contas':id)}${esc(v.nome)}</button>`}).join('')}</div></div>`).join('')}
+  modal(`<h2>Menu</h2>${GRUPOS.map(g=>`<div class="mais-g"><div class="side-title">${esc(g.nome)}</div><div class="mais">${g.views.map(id=>{const v=VIEWS.find(x=>x.id===id);return `<button data-go="${id}" ${S.view===id?'aria-current="page"':''}>${svg(ICON[id]?id:'geral')}${esc(v.nome)}</button>`}).join('')}</div></div>`).join('')}
     <div class="side-title">Ferramentas</div>
     <div class="mais"><button data-act="priv">${svg(S.priv?'olhoF':'olho')}${S.priv?'Mostrar valores':'Esconder valores'}</button><button data-act="exportar">${svg('baixar')}Exportar</button>${standalone()?'':`<button data-act="instalar">${svg('instalar')}Instalar app</button>`}
-    <button data-act="seguranca">${svg('escudo')}Segurança</button><button data-act="ajustar-caixa">💵 Ajustar saldo</button><button data-act="sair">${svg('sair')}Sair</button></div>
+    <button data-act="seguranca">${svg('escudo')}Segurança</button><button data-act="ajustar-caixa">${svg('saldo')}Ajustar saldo</button><button data-act="sair">${svg('sair')}Sair</button></div>
     <div class="btns"><button class="btn ghost" data-m="cancelar">Fechar</button></div>`);
 }
 function modalExportar(){
@@ -2814,6 +2890,7 @@ document.addEventListener('click',async e=>{
     rec=S.recorrentes.find(r=>r.id===id),div=S.dividas.find(d=>d.id===id),des=S.desejos.find(d=>d.id===id);
   if(['duplicar','des-meta','des-reabrir','div-desfazer','item-mover','oc-pular','oc-reativar','oc-desfazer','fatura-desfazer','orc-copiar','orc-padrao'].includes(act))a.disabled=true;
   try{switch(act){
+    case 'tl-n':S.tlN=Number(a.dataset.n)===6?6:12;try{localStorage.setItem('pf-tl',S.tlN)}catch(x){}render();break;
     case 'mes-1':S.mes=addMes(S.mes,-1);await recarregar();break;
     case 'mes+1':S.mes=addMes(S.mes,1);await recarregar();break;
     case 'ano-1':S.ano--;render();break;
@@ -2915,7 +2992,7 @@ document.addEventListener('click',async e=>{
     case 'fatura-prev':if(cartao)modalPagPrev(cartao,a.dataset.fm);break;
     case 'patr-ini':modalPatrIni();break;
     case 'renda-media':modalRendaMedia();break;
-    case 'kpi-det':(a.dataset.k==='entradas'||a.dataset.k==='gastos')?modalFluxo(a.dataset.k):modalKpi(a.dataset.k);break;
+    case 'kpi-det':(a.dataset.k==='entradas'||a.dataset.k==='gastos'||a.dataset.k==='jaSaiu')?modalFluxo(a.dataset.k):modalKpi(a.dataset.k);break;
     case 'det-fluxo':modalFluxo(a.dataset.k,true);break;
     case 'det-proj':modalProjecao();break;
     case 'det-edit':{const it=S.itens.find(x=>x.id===a.dataset.id);if(it)modalLancamento(null,it)}break;
